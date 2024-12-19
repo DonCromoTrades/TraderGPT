@@ -13,15 +13,12 @@ from flask_cors import CORS
 # Load environment variables
 load_dotenv()
 
-# Flask app
 app = Flask(__name__)
 CORS(app)
 
-# Logging
 logging.basicConfig(filename='trading_log.txt', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Environment variables
 API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY_BASE64 = os.getenv("PRIVATE_KEY_BASE64")
 BASE_URL = os.getenv("BASE_URL")
@@ -66,25 +63,18 @@ def fetch_account():
     path = "/api/v1/crypto/trading/accounts/"
     account_data = make_request("GET", path)
 
-    # Check if there was an error
     if "error" in account_data:
         return jsonify({"error": "Failed to fetch account details", "details": account_data["error"]}), 500
 
-    # Transform to match schema
-    # Suppose the external API returns something like:
+    # If the external API returns exactly:
     # {
-    #   "account_id": "123456",
-    #   "available_usd": "1000.00",
+    #   "account_number": "#########",
+    #   "buying_power": "##.####",
+    #   "buying_power_currency": "USD",
     #   "status": "active"
     # }
-    # Adjust this transformation if your real data differs.
-    normalized_response = {
-        "account_number": account_data.get("account_id", ""),
-        "buying_power": account_data.get("available_usd", ""),
-        "buying_power_currency": "USD",
-        "status": account_data.get("status", "")
-    }
-    return jsonify(normalized_response), 200
+    # No transformation needed:
+    return jsonify(account_data), 200
 
 @app.route("/proxy/best_bid_ask", methods=["GET"])
 def fetch_market_data():
@@ -92,11 +82,10 @@ def fetch_market_data():
     path = f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}"
     market_data = make_request("GET", path)
 
-    # If error occurred
     if "error" in market_data:
         return jsonify({"error": "Failed to fetch market data", "details": market_data["error"]}), 500
 
-    # Assume the external API already returns:
+    # Assuming the external API matches the schema exactly:
     # {
     #   "results": [
     #     {
@@ -105,7 +94,6 @@ def fetch_market_data():
     #     }
     #   ]
     # }
-    # If different, transform it to match the schema.
     return jsonify(market_data), 200
 
 @app.route("/proxy/place_order", methods=["POST"])
@@ -115,22 +103,22 @@ def place_market_order():
     side = data.get("side", "buy")
     usd_amount = float(data.get("usd_amount", 5.0))
 
-    # Fetch market data to calculate quantity
     market_data = make_request("GET", f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}")
     if "error" in market_data:
         return jsonify({"error": "Failed to place the order", "details": "Could not fetch market data"}), 500
 
     results = market_data.get("results", [])
     if not results:
-        return jsonify({"error": "Invalid trade parameters", "details": "No market data found"}), 400
+        return jsonify({"error": "Invalid trade parameters or insufficient funds", "details": "No market data found"}), 400
 
+    btc_price = 0.0
     if side == "buy":
         btc_price = float(results[0].get("ask_inclusive_of_buy_spread", 0))
     else:
         btc_price = float(results[0].get("bid_inclusive_of_sell_spread", 0))
 
     if btc_price <= 0:
-        return jsonify({"error": "Invalid trade parameters", "details": "Invalid price"}), 400
+        return jsonify({"error": "Invalid trade parameters or insufficient funds", "details": "Invalid price"}), 400
 
     btc_quantity = usd_amount / btc_price
     path = "/api/v1/crypto/trading/orders/"
@@ -145,21 +133,14 @@ def place_market_order():
     response = make_request("POST", path, json.dumps(order))
 
     if "error" in response:
-        # Assume error indicates failure:
         return jsonify({"error": "Failed to place the order", "details": response["error"]}), 500
 
-    # Assume a successful order returns something like:
-    # {
-    #   "order_id": "order_12345",
-    #   "status": "submitted"
-    # }
-    # If not, transform accordingly.
-    order_id = response.get("order_id", "")
-    status = response.get("status", "")
-    if not order_id or not status:
-        return jsonify({"error": "Invalid response from order API", "details": "Missing order_id or status"}), 500
-
-    return jsonify({"order_id": order_id, "status": status}), 200
+    # Assuming the external API responds with something like:
+    # {"order_id": "order_12345", "status": "submitted"}
+    return jsonify({
+        "order_id": response.get("order_id", ""),
+        "status": response.get("status", "")
+    }), 200
 
 @app.route("/proxy/dynamic_market_data", methods=["GET"])
 def dynamic_market_data():
