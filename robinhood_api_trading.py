@@ -15,25 +15,30 @@ from flask_limiter.util import get_remote_address
 # Load environment variables
 load_dotenv()
 
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
 # Setup rate limiter
 limiter = Limiter(app, key_func=get_remote_address)
 
+# Configure logging
 logging.basicConfig(filename='trading_log.txt', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Load API credentials
 API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY_BASE64 = os.getenv("PRIVATE_KEY_BASE64")
 BASE_URL = os.getenv("BASE_URL")
 
+# Utility: Generate Signature
 def generate_signature(api_key, timestamp, path, method, body=""):
     message = f"{api_key}{timestamp}{path}{method}{body}"
     private_key = SigningKey(base64.b64decode(PRIVATE_KEY_BASE64))
     signature = private_key.sign(message.encode("utf-8")).signature
     return base64.b64encode(signature).decode("utf-8")
 
+# Utility: Generate Headers
 def get_headers(path, method, body=""):
     timestamp = str(int(time.time()))
     signature = generate_signature(API_KEY, timestamp, path, method, body)
@@ -46,7 +51,7 @@ def get_headers(path, method, body=""):
     logging.info(f"Generated Headers: {headers}")
     return headers
 
-# Modified Helper: Make API Request
+# Utility: Make API Request
 def make_request(method, path, body=""):
     headers = get_headers(path, method, body)
     url = f"{BASE_URL}{path}"
@@ -67,11 +72,13 @@ def make_request(method, path, body=""):
         logging.error(f"Error in request: {e}")
         return {"error": str(e)}
 
+# Home Route
 @app.route("/")
 def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
-@limiter.limit("10 per minute")  # Rate limit for fetch_account
+# Fetch Account Details
+@limiter.limit("10 per minute")
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
     path = "/api/v1/crypto/trading/accounts/"
@@ -80,17 +87,39 @@ def fetch_account():
         "response_data": account_data
     })
 
+# Fetch Crypto Holdings
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_holdings", methods=["GET"])
 def fetch_crypto_holdings():
-    path = "/api/v1/crypto/holdings/"
+    asset_code = request.args.get("asset_code")  # Optional query parameter
+    limit = request.args.get("limit")           # Optional query parameter
+    cursor = request.args.get("cursor")         # Optional query parameter
+    
+    # Construct the query parameters
+    query_params = []
+    if asset_code:
+        query_params.append(f"asset_code={asset_code}")
+    if limit:
+        query_params.append(f"limit={limit}")
+    if cursor:
+        query_params.append(f"cursor={cursor}")
+    
+    # Combine query parameters into a single query string
+    query_string = "&".join(query_params)
+    path = f"/api/v1/crypto/trading/holdings/"
+    if query_string:
+        path += f"?{query_string}"
+    
+    # Make the request
     holdings_data = make_request("GET", path)
-
+    
+    # Handle response and return
     if "error" in holdings_data:
         return jsonify({"error": "Failed to fetch crypto holdings", "details": holdings_data["error"]}), 500
-
+    
     return jsonify(holdings_data), 200
 
+# Fetch Crypto Account Details
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_account_details", methods=["GET"])
 def fetch_crypto_account_details():
@@ -102,6 +131,7 @@ def fetch_crypto_account_details():
 
     return jsonify(account_details), 200
 
+# Fetch Crypto Orders
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_orders", methods=["GET"])
 def fetch_crypto_orders():
@@ -113,6 +143,7 @@ def fetch_crypto_orders():
 
     return jsonify(orders_data), 200
 
+# Fetch Crypto Products
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_products", methods=["GET"])
 def fetch_crypto_products():
@@ -124,6 +155,7 @@ def fetch_crypto_products():
 
     return jsonify(products_data), 200
 
+# Fetch Crypto Quotes
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_quotes", methods=["GET"])
 def fetch_crypto_quotes():
@@ -136,6 +168,7 @@ def fetch_crypto_quotes():
 
     return jsonify(quotes_data), 200
 
+# Fetch Best Bid/Ask Market Data
 @limiter.limit("10 per minute")
 @app.route("/proxy/best_bid_ask", methods=["GET"])
 def fetch_market_data():
@@ -148,6 +181,7 @@ def fetch_market_data():
 
     return jsonify(market_data), 200
 
+# Place Market Order
 @limiter.limit("5 per minute")
 @app.route("/proxy/place_order", methods=["POST"])
 def place_market_order():
@@ -190,6 +224,7 @@ def place_market_order():
         "status": response.get("status", "")
     }), 200
 
+# Dynamic Market Data Fetch
 @limiter.limit("10 per minute")
 @app.route("/proxy/dynamic_market_data", methods=["GET"])
 def dynamic_market_data():
@@ -211,5 +246,6 @@ def dynamic_market_data():
     except requests.RequestException as e:
         return jsonify({"error": "Failed to fetch market data", "details": str(e)}), 500
 
+# Run Flask App
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
