@@ -11,6 +11,20 @@ from nacl.signing import SigningKey
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from redis import Redis
+
+# Configure Redis as the storage backend
+redis_client = Redis(host="localhost", port=6379)  # Update with your Redis host/port
+
+# Setup rate limiter with Redis
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    storage_uri="redis://localhost:6379"  # Update to match your Redis configuration
+)
+
 
 # Load environment variables
 load_dotenv()
