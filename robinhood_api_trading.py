@@ -57,6 +57,11 @@ def make_request(method, path, body=""):
         logging.error(f"Error in request: {e}")
         return {"error": str(e)}
 
+@app.route("/")
+def home():
+    return jsonify({"message": "TraderGPT API is live!", "endpoints": ["/proxy/fetch_account", "/proxy/best_bid_ask", "/proxy/place_order"]})
+
+
 # Fetch Account Details
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
@@ -97,6 +102,30 @@ def place_market_order():
     response = make_request("POST", path, json.dumps(order))
     return jsonify(response)
 
+# Fetch Dynamic Market Data
+@app.route("/proxy/dynamic_market_data", methods=["GET"])
+def dynamic_market_data():
+    """Fetch market data dynamically from any specified API."""
+    api_url = request.args.get("url")  # URL of the external API
+    params = request.args.get("params")  # Query parameters in JSON format
+
+    if not api_url:
+        return jsonify({"error": "Missing 'url' parameter"}), 400
+
+    try:
+        # Convert params from JSON string to dictionary if provided
+        query_params = json.loads(params) if params else {}
+
+        # Fetch data from the external API
+        response = requests.get(api_url, params=query_params)
+        response.raise_for_status()
+        return jsonify({"data": response.json()})
+    except requests.RequestException as e:
+        logging.error(f"Error fetching dynamic market data: {e}")
+        return jsonify({"error": "Failed to fetch market data", "details": str(e)}), 500
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid 'params' JSON format"}), 400
+
 # Standalone Testing Function
 def main():
     print("Fetching account details...")
@@ -110,4 +139,4 @@ def main():
     print(place_market_order(data))
 
 if __name__ == "__main__":
-  app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
