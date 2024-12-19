@@ -9,12 +9,17 @@ import os
 from dotenv import load_dotenv
 from nacl.signing import SigningKey
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# Setup rate limiter
+limiter = Limiter(app, key_func=get_remote_address)
 
 logging.basicConfig(filename='trading_log.txt', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,7 +43,7 @@ def get_headers(path, method, body=""):
         "x-timestamp": timestamp,
         "Content-Type": "application/json"
     }
-    logging.info(f"Generated Headers: {headers}")  # Debug headers
+    logging.info(f"Generated Headers: {headers}")
     return headers
 
 # Modified Helper: Make API Request
@@ -48,12 +53,11 @@ def make_request(method, path, body=""):
     try:
         response = None
         if method == "GET":
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=10)
         elif method == "POST":
-            response = requests.post(url, headers=headers, data=body)
+            response = requests.post(url, headers=headers, data=body, timeout=10)
         response.raise_for_status()
 
-        # Log response details
         logging.info(f"Request URL: {url}")
         logging.info(f"Response Status Code: {response.status_code}")
         logging.info(f"Response Body: {response.json()}")
@@ -67,25 +71,72 @@ def make_request(method, path, body=""):
 def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
-# fetch account
+@limiter.limit("10 per minute")  # Rate limit for fetch_account
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
-    # Log incoming request headers and query parameters
-    logging.info(f"Incoming Headers: {dict(request.headers)}")
-    logging.info(f"Incoming Query Params: {request.args}")
-
     path = "/api/v1/crypto/trading/accounts/"
-    headers = get_headers(path, "GET")
     account_data = make_request("GET", path)
-    # Return headers and response for debugging
     return jsonify({
-        "headers_sent": headers,
-        "incoming_headers": dict(request.headers),
         "response_data": account_data
     })
 
+@limiter.limit("10 per minute")
+@app.route("/proxy/crypto_holdings", methods=["GET"])
+def fetch_crypto_holdings():
+    path = "/api/v1/crypto/holdings/"
+    holdings_data = make_request("GET", path)
 
-# find best bid
+    if "error" in holdings_data:
+        return jsonify({"error": "Failed to fetch crypto holdings", "details": holdings_data["error"]}), 500
+
+    return jsonify(holdings_data), 200
+
+@limiter.limit("10 per minute")
+@app.route("/proxy/crypto_account_details", methods=["GET"])
+def fetch_crypto_account_details():
+    path = "/api/v1/crypto/accounts/details/"
+    account_details = make_request("GET", path)
+
+    if "error" in account_details:
+        return jsonify({"error": "Failed to fetch account details", "details": account_details["error"]}), 500
+
+    return jsonify(account_details), 200
+
+@limiter.limit("10 per minute")
+@app.route("/proxy/crypto_orders", methods=["GET"])
+def fetch_crypto_orders():
+    path = "/api/v1/crypto/orders/"
+    orders_data = make_request("GET", path)
+
+    if "error" in orders_data:
+        return jsonify({"error": "Failed to fetch orders", "details": orders_data["error"]}), 500
+
+    return jsonify(orders_data), 200
+
+@limiter.limit("10 per minute")
+@app.route("/proxy/crypto_products", methods=["GET"])
+def fetch_crypto_products():
+    path = "/api/v1/crypto/products/"
+    products_data = make_request("GET", path)
+
+    if "error" in products_data:
+        return jsonify({"error": "Failed to fetch products", "details": products_data["error"]}), 500
+
+    return jsonify(products_data), 200
+
+@limiter.limit("10 per minute")
+@app.route("/proxy/crypto_quotes", methods=["GET"])
+def fetch_crypto_quotes():
+    symbol = request.args.get("symbol", "BTC-USD")
+    path = f"/api/v1/crypto/quotes/?symbol={symbol}"
+    quotes_data = make_request("GET", path)
+
+    if "error" in quotes_data:
+        return jsonify({"error": "Failed to fetch quotes", "details": quotes_data["error"]}), 500
+
+    return jsonify(quotes_data), 200
+
+@limiter.limit("10 per minute")
 @app.route("/proxy/best_bid_ask", methods=["GET"])
 def fetch_market_data():
     symbol = request.args.get("symbol", "BTC-USD")
@@ -95,23 +146,18 @@ def fetch_market_data():
     if "error" in market_data:
         return jsonify({"error": "Failed to fetch market data", "details": market_data["error"]}), 500
 
-    # Assuming the external API matches the schema exactly:
-    # {
-    #   "results": [
-    #     {
-    #       "ask_inclusive_of_buy_spread": 30000.0,
-    #       "bid_inclusive_of_sell_spread": 29900.0
-    #     }
-    #   ]
-    # }
     return jsonify(market_data), 200
 
+@limiter.limit("5 per minute")
 @app.route("/proxy/place_order", methods=["POST"])
 def place_market_order():
     data = request.get_json()
     symbol = data.get("symbol", "BTC-USD")
     side = data.get("side", "buy")
-    usd_amount = float(data.get("usd_amount", 5.0))
+    usd_amount = data.get("usd_amount", 5.0)
+
+    if not isinstance(usd_amount, (int, float)) or usd_amount <= 0:
+        return jsonify({"error": "Invalid USD amount"}), 400
 
     market_data = make_request("GET", f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}")
     if "error" in market_data:
@@ -119,16 +165,11 @@ def place_market_order():
 
     results = market_data.get("results", [])
     if not results:
-        return jsonify({"error": "Invalid trade parameters or insufficient funds", "details": "No market data found"}), 400
+        return jsonify({"error": "Invalid trade parameters", "details": "No market data found"}), 400
 
-    btc_price = 0.0
-    if side == "buy":
-        btc_price = float(results[0].get("ask_inclusive_of_buy_spread", 0))
-    else:
-        btc_price = float(results[0].get("bid_inclusive_of_sell_spread", 0))
-
+    btc_price = float(results[0].get("ask_inclusive_of_buy_spread" if side == "buy" else "bid_inclusive_of_sell_spread", 0))
     if btc_price <= 0:
-        return jsonify({"error": "Invalid trade parameters or insufficient funds", "details": "Invalid price"}), 400
+        return jsonify({"error": "Invalid trade parameters", "details": "Invalid price"}), 400
 
     btc_quantity = usd_amount / btc_price
     path = "/api/v1/crypto/trading/orders/"
@@ -141,17 +182,15 @@ def place_market_order():
     }
 
     response = make_request("POST", path, json.dumps(order))
-
     if "error" in response:
         return jsonify({"error": "Failed to place the order", "details": response["error"]}), 500
 
-    # Assuming the external API responds with something like:
-    # {"order_id": "order_12345", "status": "submitted"}
     return jsonify({
         "order_id": response.get("order_id", ""),
         "status": response.get("status", "")
     }), 200
 
+@limiter.limit("10 per minute")
 @app.route("/proxy/dynamic_market_data", methods=["GET"])
 def dynamic_market_data():
     api_url = request.args.get("url")
@@ -166,7 +205,7 @@ def dynamic_market_data():
         return jsonify({"error": "Invalid 'params' JSON format"}), 400
 
     try:
-        r = requests.get(api_url, params=query_params)
+        r = requests.get(api_url, params=query_params, timeout=10)
         r.raise_for_status()
         return jsonify({"data": r.json()}), 200
     except requests.RequestException as e:
