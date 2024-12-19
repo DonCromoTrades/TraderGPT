@@ -32,12 +32,14 @@ def generate_signature(api_key, timestamp, path, method, body=""):
 def get_headers(path, method, body=""):
     timestamp = str(int(time.time()))
     signature = generate_signature(API_KEY, timestamp, path, method, body)
-    return {
+    headers = {
         "x-api-key": API_KEY,
         "x-signature": signature,
         "x-timestamp": timestamp,
         "Content-Type": "application/json"
     }
+    logging.info(f"Generated Headers: {headers}")  # Debug headers
+    return headers
 
 def make_request(method, path, body=""):
     headers = get_headers(path, method, body)
