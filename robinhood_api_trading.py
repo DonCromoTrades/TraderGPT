@@ -8,6 +8,11 @@ import logging
 import os
 from dotenv import load_dotenv
 from nacl.signing import SigningKey
+from flask_cors import CORS
+
+# Enable CORS in the Flask app
+app = Flask(__name__)
+CORS(app)  # Add this line
 
 # Load environment variables from .env file
 load_dotenv()
