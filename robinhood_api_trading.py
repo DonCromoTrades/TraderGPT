@@ -41,16 +41,23 @@ def get_headers(path, method, body=""):
     logging.info(f"Generated Headers: {headers}")  # Debug headers
     return headers
 
+# Modified Helper: Make API Request
 def make_request(method, path, body=""):
     headers = get_headers(path, method, body)
     url = f"{BASE_URL}{path}"
     try:
+        response = None
         if method == "GET":
             response = requests.get(url, headers=headers)
         elif method == "POST":
             response = requests.post(url, headers=headers, data=body)
-
         response.raise_for_status()
+
+        # Log response details
+        logging.info(f"Request URL: {url}")
+        logging.info(f"Response Status Code: {response.status_code}")
+        logging.info(f"Response Body: {response.json()}")
+
         return response.json()
     except requests.RequestException as e:
         logging.error(f"Error in request: {e}")
@@ -63,20 +70,13 @@ def home():
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
     path = "/api/v1/crypto/trading/accounts/"
+    headers = get_headers(path, "GET")
     account_data = make_request("GET", path)
-
-    if "error" in account_data:
-        return jsonify({"error": "Failed to fetch account details", "details": account_data["error"]}), 500
-
-    # If the external API returns exactly:
-    # {
-    #   "account_number": "#########",
-    #   "buying_power": "##.####",
-    #   "buying_power_currency": "USD",
-    #   "status": "active"
-    # }
-    # No transformation needed:
-    return jsonify(account_data), 200
+    # Return headers and response for debugging
+    return jsonify({
+        "headers_sent": headers,
+        "response_data": account_data
+    })
 
 @app.route("/proxy/best_bid_ask", methods=["GET"])
 def fetch_market_data():
