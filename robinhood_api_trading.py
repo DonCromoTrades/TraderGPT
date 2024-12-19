@@ -70,19 +70,20 @@ def home():
 # fetch account
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
+    # Log incoming request headers and query parameters
+    logging.info(f"Incoming Headers: {dict(request.headers)}")
+    logging.info(f"Incoming Query Params: {request.args}")
+
     path = "/api/v1/crypto/trading/accounts/"
     headers = get_headers(path, "GET")
     account_data = make_request("GET", path)
-
-    # Log incoming request headers
-    logging.info(f"Incoming Request Headers: {dict(request.headers)}")
-
     # Return headers and response for debugging
     return jsonify({
         "headers_sent": headers,
         "incoming_headers": dict(request.headers),
         "response_data": account_data
     })
+
 
 # find best bid
 @app.route("/proxy/best_bid_ask", methods=["GET"])
