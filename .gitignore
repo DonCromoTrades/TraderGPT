@@ -1,0 +1,16 @@
+# Ignore environment variables
+.env
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore log files
+*.log
+trading_log.txt
+
+# Ignore virtual environments
+venv/
+
+gen_api_key_robinhood.py
+generate_keys.py
