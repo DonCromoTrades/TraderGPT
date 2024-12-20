@@ -66,19 +66,38 @@ def get_headers(path, method, body=""):
 def make_request(method, path, body=""):
     headers = get_headers(path, method, body)
     url = f"{BASE_URL}{path}"
+
     try:
+        response = None
         if method == "GET":
             response = requests.get(url, headers=headers, timeout=10)
         elif method == "POST":
             response = requests.post(url, headers=headers, data=body, timeout=10)
+
+        # Raise HTTPError if response status is 4xx or 5xx
         response.raise_for_status()
-        logging.info(f"Request URL: {url}")
-        logging.info(f"Response Status Code: {response.status_code}")
-        logging.info(f"Response Body: {response.json()}")
-        return response.json()
-    except requests.RequestException as e:
-        logging.error(f"Error in request: {e}")
-        return {"error": str(e)}
+
+        # Attempt to parse JSON response
+        try:
+            response_json = response.json()
+            logging.info(f"Request URL: {url}")
+            logging.info(f"Response Status Code: {response.status_code}")
+            logging.info(f"Response Body: {response_json}")
+            return response_json
+        except ValueError as json_error:
+            logging.error(f"Response is not JSON. Response text: {response.text}")
+            return {"error": "Invalid JSON response from API", "details": response.text}
+
+    except requests.RequestException as req_error:
+        logging.error(f"Request failed. Headers: {headers}, URL: {url}")
+        logging.error(f"Response Status: {response.status_code if response else 'No Response'}")
+        logging.error(f"Response Body: {response.text if response else 'No Response Body'}")
+        logging.error(f"Error details: {req_error}")
+        return {"error": "Request failed", "details": str(req_error)}
+    except Exception as general_error:
+        logging.error(f"Unexpected error occurred: {general_error}")
+        return {"error": "An unexpected error occurred", "details": str(general_error)}
+
 
 
 # Routes
