@@ -235,7 +235,7 @@ def place_order():
                     "error": f"Missing required field: {field}"
                 }), 400
 
-        # Fetch the current BTC price
+        # Fetch the current price to calculate asset quantity
         market_data = get_best_bid_ask(order_data["symbol"])
         btc_price = float(market_data["results"][0]["ask_inclusive_of_buy_spread"])  # Extract price
         print(f"Current BTC Price: ${btc_price}")
@@ -251,6 +251,7 @@ def place_order():
             "side": order_data["side"],  # "buy" or "sell"
             "symbol": order_data["symbol"],
             "type": "market",
+            "usd_amount": order_data["usd_amount"],  # Explicitly include usd_amount
             "market_order_config": {"asset_quantity": f"{btc_quantity:.8f}"}
         })
 
