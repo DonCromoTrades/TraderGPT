@@ -196,10 +196,69 @@ def fetch_crypto_account_details():
 
     return jsonify(account_details), 200
 
-
-
-
 # Add other endpoints here...
+
+# Place a new order
+@limiter.limit("10 per minute")
+@app.route("/proxy/place_order", methods=["POST"])
+def place_order():
+    """
+    Place a new crypto trading order.
+    """
+    try:
+        # Parse the JSON request body
+        order_data = request.json
+
+        # Validate required fields
+        required_fields = ["symbol", "client_order_id", "side", "type"]
+        for field in required_fields:
+            if field not in order_data:
+                return jsonify({
+                    "error": f"Missing required field: {field}"
+                }), 400
+
+        # Check for order configuration based on the order type
+        order_type = order_data["type"]
+        order_configs = {
+            "market": "market_order_config",
+            "limit": "limit_order_config",
+            "stop_loss": "stop_loss_order_config",
+            "stop_limit": "stop_limit_order_config"
+        }
+
+        if order_type not in order_configs:
+            return jsonify({
+                "error": f"Invalid order type: {order_type}. Must be one of {list(order_configs.keys())}."
+            }), 400
+
+        required_config_key = order_configs[order_type]
+        if required_config_key not in order_data:
+            return jsonify({
+                "error": f"Missing required configuration for {order_type} orders: {required_config_key}"
+            }), 400
+
+        # Construct the API request path and body
+        path = "/api/v1/crypto/trading/orders/"
+        body = json.dumps(order_data)
+
+        # Make the POST request to the Robinhood API
+        response = make_request("POST", path, body)
+
+        # Handle errors and return the response
+        if "error" in response:
+            return jsonify({
+                "error": "Failed to place the order",
+                "details": response.get("error")
+            }), 500
+
+        return jsonify(response), 201
+
+    except Exception as e:
+        logging.error(f"Error while placing order: {e}")
+        return jsonify({
+            "error": "An unexpected error occurred",
+            "details": str(e)
+        }), 500
 
 
 if __name__ == "__main__":
