@@ -198,68 +198,61 @@ def fetch_crypto_account_details():
 
 # Add other endpoints here...
 
-# Place a new order
-@limiter.limit("10 per minute")
-@app.route("/proxy/place_order", methods=["POST"])
-def place_order():
-    """
-    Place a new crypto trading order.
-    """
+# Place market order
+def place_market_order(symbol, side, usd_amount):
+    # Fetch the current BTC price
+    market_data = get_best_bid_ask(symbol)  # Ensure this function exists and works
+    btc_price = float(market_data["results"][0]["ask_inclusive_of_buy_spread"])  # Correct price field
+    print(f"Current BTC Price: ${btc_price}")
+    
+    # Calculate the BTC quantity for the USD amount
+    btc_quantity = usd_amount / btc_price
+    print(f"Placing order for {btc_quantity:.8f} BTC (equivalent to ${usd_amount})")
+
+    # Prepare the order body
+    path = "/api/v1/crypto/trading/orders/"
+    body = json.dumps({
+        "client_order_id": str(uuid.uuid4()),
+        "side": side,  # "buy" or "sell"
+        "symbol": symbol,
+        "type": "market",
+        "market_order_config": {"asset_quantity": f"{btc_quantity:.8f}"}
+    })
+
+    # Print the order payload
+    print("\nOrder Payload:", body)
+
+    headers = get_headers(path, "POST", body)
+    url = BASE_URL + path
+
+    # Print the headers
+    print("\nRequest Headers:")
+    for key, value in headers.items():
+        print(f"{key}: {value}")
+
+    # Send the request
     try:
-        # Parse the JSON request body
-        order_data = request.json
+        response = requests.post(url, headers=headers, data=body)
+        print("\nResponse Status Code:", response.status_code)
+        print("Response Body:", response.json())
 
-        # Validate required fields
-        required_fields = ["symbol", "client_order_id", "side", "type"]
-        for field in required_fields:
-            if field not in order_data:
-                return jsonify({
-                    "error": f"Missing required field: {field}"
-                }), 400
+        # Return response
+        return response.json()
 
-        # Check for order configuration based on the order type
-        order_type = order_data["type"]
-        order_configs = {
-            "market": "market_order_config",
-            "limit": "limit_order_config",
-            "stop_loss": "stop_loss_order_config",
-            "stop_limit": "stop_limit_order_config"
-        }
+    except requests.exceptions.RequestException as e:
+        print("Error placing order:", e)
+        return None
 
-        if order_type not in order_configs:
-            return jsonify({
-                "error": f"Invalid order type: {order_type}. Must be one of {list(order_configs.keys())}."
-            }), 400
+# Example usage
+if __name__ == "__main__":
+    print("Calling place_market_order...")
+    order_response = place_market_order("BTC-USD", "buy", 5)  # Example: Buy $5 worth of BTC
+    print("Order Response:", order_response)
 
-        required_config_key = order_configs[order_type]
-        if required_config_key not in order_data:
-            return jsonify({
-                "error": f"Missing required configuration for {order_type} orders: {required_config_key}"
-            }), 400
-
-        # Construct the API request path and body
-        path = "/api/v1/crypto/trading/orders/"
-        body = json.dumps(order_data)
-
-        # Make the POST request to the Robinhood API
-        response = make_request("POST", path, body)
-
-        # Handle errors and return the response
-        if "error" in response:
-            return jsonify({
-                "error": "Failed to place the order",
-                "details": response.get("error")
-            }), 500
-
-        return jsonify(response), 201
-
-    except Exception as e:
-        logging.error(f"Error while placing order: {e}")
-        return jsonify({
-            "error": "An unexpected error occurred",
-            "details": str(e)
-        }), 500
-
+    # Logging
+    logging.basicConfig(filename='trading_log.txt', level=logging.INFO, 
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.info("Order placed successfully: %s", order_response)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
