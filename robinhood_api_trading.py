@@ -106,62 +106,70 @@ def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
 # fetch crypto orders
-@app.route("/proxy/crypto_orders", methods=["GET"])
 @limiter.limit("10 per minute")
+@app.route("/proxy/crypto_orders", methods=["GET"])
 def fetch_crypto_orders():
-    # Collect query parameters from the request
-    created_at_start = request.args.get("created_at_start")
-    created_at_end = request.args.get("created_at_end")
-    symbol = request.args.get("symbol")
-    id = request.args.get("id")
-    side = request.args.get("side")
-    state = request.args.get("state")
-    type_ = request.args.get("type")  # 'type' is reserved in Python
-    updated_at_start = request.args.get("updated_at_start")
-    updated_at_end = request.args.get("updated_at_end")
-    cursor = request.args.get("cursor")
-    limit = request.args.get("limit")
+    try:
+        # Collect optional query parameters
+        created_at_start = request.args.get("created_at_start")
+        created_at_end = request.args.get("created_at_end")
+        symbol = request.args.get("symbol")
+        id = request.args.get("id")
+        side = request.args.get("side")
+        state = request.args.get("state")
+        type_ = request.args.get("type")
+        updated_at_start = request.args.get("updated_at_start")
+        updated_at_end = request.args.get("updated_at_end")
+        cursor = request.args.get("cursor")
+        limit = request.args.get("limit")
 
-    # Construct query parameters
-    query_params = []
-    if created_at_start:
-        query_params.append(f"created_at_start={created_at_start}")
-    if created_at_end:
-        query_params.append(f"created_at_end={created_at_end}")
-    if symbol:
-        query_params.append(f"symbol={symbol}")
-    if id:
-        query_params.append(f"id={id}")
-    if side:
-        query_params.append(f"side={side}")
-    if state:
-        query_params.append(f"state={state}")
-    if type_:
-        query_params.append(f"type={type_}")
-    if updated_at_start:
-        query_params.append(f"updated_at_start={updated_at_start}")
-    if updated_at_end:
-        query_params.append(f"updated_at_end={updated_at_end}")
-    if cursor:
-        query_params.append(f"cursor={cursor}")
-    if limit:
-        query_params.append(f"limit={limit}")
+        # Construct query parameters
+        query_params = []
+        if created_at_start:
+            query_params.append(f"created_at_start={created_at_start}")
+        if created_at_end:
+            query_params.append(f"created_at_end={created_at_end}")
+        if symbol:
+            query_params.append(f"symbol={symbol}")
+        if id:
+            query_params.append(f"id={id}")
+        if side:
+            query_params.append(f"side={side}")
+        if state:
+            query_params.append(f"state={state}")
+        if type_:
+            query_params.append(f"type={type_}")
+        if updated_at_start:
+            query_params.append(f"updated_at_start={updated_at_start}")
+        if updated_at_end:
+            query_params.append(f"updated_at_end={updated_at_end}")
+        if cursor:
+            query_params.append(f"cursor={cursor}")
+        if limit:
+            query_params.append(f"limit={limit}")
 
-    # Combine query parameters into the query string
-    query_string = "&".join(query_params)
-    path = "/api/v1/crypto/orders/"
-    if query_string:
-        path += f"?{query_string}"
+        # Combine query parameters into a query string
+        query_string = "&".join(query_params)
+        path = "/api/v1/crypto/orders/"
+        if query_string:
+            path += f"?{query_string}"
 
-    # Make the request
-    orders_data = make_request("GET", path)
+        # Log constructed path
+        logging.info(f"Constructed Path: {path}")
 
-    # Handle response
-    if "error" in orders_data:
-        return jsonify({"error": "Failed to fetch crypto orders", "details": orders_data["error"]}), 500
+        # Make the request
+        orders_data = make_request("GET", path)
 
-    return jsonify(orders_data), 200
+        # Handle response and return
+        if "error" in orders_data:
+            return jsonify({"error": "Failed to fetch crypto orders", "details": orders_data["error"]}), 500
 
+        return jsonify(orders_data), 200
+    except Exception as e:
+        logging.error(f"Unexpected error in fetch_crypto_orders: {str(e)}")
+        return jsonify({"error": "An unexpected error occurred", "details": str(e)}), 500
+
+# fetch account
 @limiter.limit("10 per minute")
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
