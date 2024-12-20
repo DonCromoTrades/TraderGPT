@@ -87,17 +87,17 @@ def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
 # fetch crypto orders
-@limiter.limit("10 per minute")
 @app.route("/proxy/crypto_orders", methods=["GET"])
+@limiter.limit("10 per minute")
 def fetch_crypto_orders():
-    # Collect optional query parameters
+    # Collect query parameters from the request
     created_at_start = request.args.get("created_at_start")
     created_at_end = request.args.get("created_at_end")
     symbol = request.args.get("symbol")
     id = request.args.get("id")
     side = request.args.get("side")
     state = request.args.get("state")
-    type_ = request.args.get("type")  # 'type' is a reserved keyword in Python, so use 'type_'
+    type_ = request.args.get("type")  # 'type' is reserved in Python
     updated_at_start = request.args.get("updated_at_start")
     updated_at_end = request.args.get("updated_at_end")
     cursor = request.args.get("cursor")
@@ -128,7 +128,7 @@ def fetch_crypto_orders():
     if limit:
         query_params.append(f"limit={limit}")
 
-    # Combine query parameters into a query string
+    # Combine query parameters into the query string
     query_string = "&".join(query_params)
     path = "/api/v1/crypto/orders/"
     if query_string:
@@ -137,12 +137,11 @@ def fetch_crypto_orders():
     # Make the request
     orders_data = make_request("GET", path)
 
-    # Handle response and return
+    # Handle response
     if "error" in orders_data:
         return jsonify({"error": "Failed to fetch crypto orders", "details": orders_data["error"]}), 500
 
     return jsonify(orders_data), 200
-
 
 @limiter.limit("10 per minute")
 @app.route("/proxy/fetch_account", methods=["GET"])
