@@ -201,19 +201,21 @@ def fetch_crypto_holdings():
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_account_details", methods=["GET"])
 def fetch_crypto_account_details():
+    # Path for the Robinhood API endpoint
     path = "/api/v1/crypto/trading/accounts/"
     
-    # Generate headers and make the request
+    # Make the GET request to the Robinhood API
     account_details = make_request("GET", path)
     
     # Handle errors and return the response
     if "error" in account_details:
         return jsonify({
-            "error": "Failed to fetch account details", 
+            "error": "Failed to fetch account details",
             "details": account_details["error"]
         }), 500
-    
+
     return jsonify(account_details), 200
+
 
 
 
