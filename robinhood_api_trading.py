@@ -221,62 +221,58 @@ def fetch_crypto_account_details():
 @app.route("/proxy/place_order", methods=["POST"])
 def place_order():
     """
-    Place a new crypto trading order using a specific USD amount.
+    Place a new crypto trading order using a specific USD amount or asset quantity.
     """
     try:
         # Parse the JSON request body
         order_data = request.json
 
         # Validate required fields
-        required_fields = ["symbol", "side", "usd_amount"]
+        required_fields = ["symbol", "side", "type", "usd_amount"]
         for field in required_fields:
             if field not in order_data:
                 return jsonify({
                     "error": f"Missing required field: {field}"
                 }), 400
 
-        # Fetch the current price to calculate asset quantity
-        market_data = get_best_bid_ask(order_data["symbol"])
-        btc_price = float(market_data["results"][0]["ask_inclusive_of_buy_spread"])  # Extract price
-        print(f"Current BTC Price: ${btc_price}")
-
-        # Calculate the BTC quantity for the given USD amount
-        btc_quantity = order_data["usd_amount"] / btc_price
-        print(f"Placing order for {btc_quantity:.8f} BTC (equivalent to ${order_data['usd_amount']})")
+        # Construct the market_order_config
+        market_order_config = {
+            "quote_amount": order_data["usd_amount"]  # Use quote_amount for USD-based orders
+        }
 
         # Construct the order payload
         path = "/api/v1/crypto/trading/orders/"
         body = json.dumps({
-            "client_order_id": str(uuid.uuid4()),
+            "client_order_id": str(uuid.uuid4()),  # Generate a unique client_order_id
             "side": order_data["side"],  # "buy" or "sell"
-            "symbol": order_data["symbol"],
-            "type": "market",
-            "usd_amount": order_data["usd_amount"],  # Explicitly include usd_amount
-            "market_order_config": {"asset_quantity": f"{btc_quantity:.8f}"}
+            "type": order_data["type"],  # Order type (market, limit, etc.)
+            "symbol": order_data["symbol"],  # Trading pair (e.g., BTC-USD)
+            "market_order_config": market_order_config  # Include the market_order_config
         })
 
-        # Log the order details
-        print("\nOrder Payload:", body)
+        # Log the payload for debugging
+        logging.info(f"Order Payload: {body}")
 
-        # Make the POST request to the Robinhood API
+        # Make the POST request to Robinhood's API
         response = make_request("POST", path, body)
 
-        # Handle errors and return the response
+        # Handle errors in the response
         if "error" in response:
+            logging.error(f"Error placing order: {response.get('error')}")
             return jsonify({
                 "error": "Failed to place the order",
                 "details": response.get("error")
             }), 500
 
+        # Return the successful response
         return jsonify(response), 201
 
     except Exception as e:
-        logging.error(f"Error while placing order: {e}")
+        logging.error(f"Unexpected error while placing order: {e}")
         return jsonify({
             "error": "An unexpected error occurred",
             "details": str(e)
         }), 500
-
 
 
 if __name__ == "__main__":
