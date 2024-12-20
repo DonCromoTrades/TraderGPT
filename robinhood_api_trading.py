@@ -198,61 +198,66 @@ def fetch_crypto_account_details():
 
 # Add other endpoints here...
 
-# Place market order
-def place_market_order(symbol, side, usd_amount):
-    # Fetch the current BTC price
-    market_data = get_best_bid_ask(symbol)  # Ensure this function exists and works
-    btc_price = float(market_data["results"][0]["ask_inclusive_of_buy_spread"])  # Correct price field
-    print(f"Current BTC Price: ${btc_price}")
-    
-    # Calculate the BTC quantity for the USD amount
-    btc_quantity = usd_amount / btc_price
-    print(f"Placing order for {btc_quantity:.8f} BTC (equivalent to ${usd_amount})")
-
-    # Prepare the order body
-    path = "/api/v1/crypto/trading/orders/"
-    body = json.dumps({
-        "client_order_id": str(uuid.uuid4()),
-        "side": side,  # "buy" or "sell"
-        "symbol": symbol,
-        "type": "market",
-        "market_order_config": {"asset_quantity": f"{btc_quantity:.8f}"}
-    })
-
-    # Print the order payload
-    print("\nOrder Payload:", body)
-
-    headers = get_headers(path, "POST", body)
-    url = BASE_URL + path
-
-    # Print the headers
-    print("\nRequest Headers:")
-    for key, value in headers.items():
-        print(f"{key}: {value}")
-
-    # Send the request
+# Place a market order using USD amount
+@limiter.limit("10 per minute")
+@app.route("/proxy/place_order", methods=["POST"])
+def place_order():
+    """
+    Place a new crypto trading order using a specific USD amount.
+    """
     try:
-        response = requests.post(url, headers=headers, data=body)
-        print("\nResponse Status Code:", response.status_code)
-        print("Response Body:", response.json())
+        # Parse the JSON request body
+        order_data = request.json
 
-        # Return response
-        return response.json()
+        # Validate required fields
+        required_fields = ["symbol", "side", "usd_amount"]
+        for field in required_fields:
+            if field not in order_data:
+                return jsonify({
+                    "error": f"Missing required field: {field}"
+                }), 400
 
-    except requests.exceptions.RequestException as e:
-        print("Error placing order:", e)
-        return None
+        # Fetch the current BTC price
+        market_data = get_best_bid_ask(order_data["symbol"])  # Fetch price using helper
+        btc_price = float(market_data["results"][0]["ask_inclusive_of_buy_spread"])  # Extract price
+        print(f"Current BTC Price: ${btc_price}")
 
-# Example usage
-if __name__ == "__main__":
-    print("Calling place_market_order...")
-    order_response = place_market_order("BTC-USD", "buy", 5)  # Example: Buy $5 worth of BTC
-    print("Order Response:", order_response)
+        # Calculate the BTC quantity for the given USD amount
+        btc_quantity = order_data["usd_amount"] / btc_price
+        print(f"Placing order for {btc_quantity:.8f} BTC (equivalent to ${order_data['usd_amount']})")
 
-    # Logging
-    logging.basicConfig(filename='trading_log.txt', level=logging.INFO, 
-                        format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.info("Order placed successfully: %s", order_response)
+        # Construct the order payload
+        path = "/api/v1/crypto/trading/orders/"
+        body = json.dumps({
+            "client_order_id": str(uuid.uuid4()),
+            "side": order_data["side"],  # "buy" or "sell"
+            "symbol": order_data["symbol"],
+            "type": "market",
+            "market_order_config": {"asset_quantity": f"{btc_quantity:.8f}"}
+        })
+
+        # Log the order details
+        print("\nOrder Payload:", body)
+
+        # Make the POST request to the Robinhood API
+        response = make_request("POST", path, body)
+
+        # Handle errors and return the response
+        if "error" in response:
+            return jsonify({
+                "error": "Failed to place the order",
+                "details": response.get("error")
+            }), 500
+
+        return jsonify(response), 201
+
+    except Exception as e:
+        logging.error(f"Error while placing order: {e}")
+        return jsonify({
+            "error": "An unexpected error occurred",
+            "details": str(e)
+        }), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
