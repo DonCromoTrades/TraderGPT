@@ -197,15 +197,24 @@ def fetch_crypto_holdings():
         return jsonify({"error": "Failed to fetch crypto holdings", "details": holdings_data["error"]}), 500
     return jsonify(holdings_data), 200
 
-
+# fetch crypto account details
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_account_details", methods=["GET"])
 def fetch_crypto_account_details():
-    path = "/api/v1/crypto/accounts/details/"
+    path = "/api/v1/crypto/trading/accounts/"
+    
+    # Generate headers and make the request
     account_details = make_request("GET", path)
+    
+    # Handle errors and return the response
     if "error" in account_details:
-        return jsonify({"error": "Failed to fetch account details", "details": account_details["error"]}), 500
+        return jsonify({
+            "error": "Failed to fetch account details", 
+            "details": account_details["error"]
+        }), 500
+    
     return jsonify(account_details), 200
+
 
 
 # Add other endpoints here...
