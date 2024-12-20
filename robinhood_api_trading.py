@@ -99,6 +99,25 @@ def make_request(method, path, body=""):
         return {"error": "An unexpected error occurred", "details": str(general_error)}
 
 
+# Helper: Get Best Bid/Ask
+def get_best_bid_ask(symbol):
+    """
+    Fetch the current best bid/ask prices for a given symbol.
+    """
+    try:
+        path = f"/api/v1/crypto/quotes/{symbol}/"
+        response = make_request("GET", path)
+
+        # Validate response
+        if "results" not in response or not response["results"]:
+            raise ValueError("Invalid response structure from API.")
+
+        return response
+
+    except Exception as e:
+        logging.error(f"Error fetching market data for symbol {symbol}: {e}")
+        raise
+
 
 # Routes
 @app.route("/")
@@ -120,7 +139,7 @@ def fetch_crypto_orders():
         "id": request.args.get("id"),
         "side": request.args.get("side"),
         "state": request.args.get("state"),
-        "type": request.args.get("type"),  # 'type' is a reserved keyword, hence 'type_' is used
+        "type": request.args.get("type"),
         "updated_at_start": request.args.get("updated_at_start"),
         "updated_at_end": request.args.get("updated_at_end"),
         "cursor": request.args.get("cursor"),
@@ -198,7 +217,6 @@ def fetch_crypto_account_details():
 
 # Add other endpoints here...
 
-# Place a market order using USD amount
 @limiter.limit("10 per minute")
 @app.route("/proxy/place_order", methods=["POST"])
 def place_order():
@@ -218,7 +236,7 @@ def place_order():
                 }), 400
 
         # Fetch the current BTC price
-        market_data = get_best_bid_ask(order_data["symbol"])  # Fetch price using helper
+        market_data = get_best_bid_ask(order_data["symbol"])
         btc_price = float(market_data["results"][0]["ask_inclusive_of_buy_spread"])  # Extract price
         print(f"Current BTC Price: ${btc_price}")
 
@@ -257,6 +275,7 @@ def place_order():
             "error": "An unexpected error occurred",
             "details": str(e)
         }), 500
+
 
 
 if __name__ == "__main__":
