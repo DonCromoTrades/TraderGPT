@@ -84,7 +84,7 @@ def make_request(method, path, body=""):
             logging.info(f"Response Status Code: {response.status_code}")
             logging.info(f"Response Body: {response_json}")
             return response_json
-        except ValueError:
+        except ValueError as json_error:
             logging.error(f"Response is not JSON. Response text: {response.text}")
             return {"error": "Invalid JSON response from API", "details": response.text}
 
@@ -124,7 +124,6 @@ def get_best_bid_ask(symbol):
 def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
-
 # fetch crypto orders
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_orders", methods=["GET"])
@@ -163,7 +162,6 @@ def fetch_crypto_orders():
 
     return jsonify(orders_data), 200
 
-
 # fetch account
 @limiter.limit("10 per minute")
 @app.route("/proxy/fetch_account", methods=["GET"])
@@ -171,7 +169,6 @@ def fetch_account():
     path = "/api/v1/crypto/trading/accounts/"
     account_data = make_request("GET", path)
     return jsonify({"response_data": account_data})
-
 
 # fetch crypto holdings
 @limiter.limit("10 per minute")
@@ -199,13 +196,17 @@ def fetch_crypto_holdings():
         return jsonify({"error": "Failed to fetch crypto holdings", "details": holdings_data["error"]}), 500
     return jsonify(holdings_data), 200
 
-
 # fetch crypto account details
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_account_details", methods=["GET"])
 def fetch_crypto_account_details():
+    # Path for the Robinhood API endpoint
     path = "/api/v1/crypto/trading/accounts/"
+    
+    # Make the GET request to the Robinhood API
     account_details = make_request("GET", path)
+    
+    # Handle errors and return the response
     if "error" in account_details:
         return jsonify({
             "error": "Failed to fetch account details",
@@ -214,6 +215,7 @@ def fetch_crypto_account_details():
 
     return jsonify(account_details), 200
 
+# Add other endpoints here...
 
 @limiter.limit("10 per minute")
 @app.route("/proxy/place_order", methods=["POST"])
@@ -245,7 +247,7 @@ def place_order():
             "side": order_data["side"],  # "buy" or "sell"
             "type": order_data["type"],  # Order type (market, limit, etc.)
             "symbol": order_data["symbol"],  # Trading pair (e.g., BTC-USD)
-            "market_order_config": market_order_config
+            "market_order_config": market_order_config  # Include the market_order_config
         })
 
         # Log the payload for debugging
