@@ -20,11 +20,11 @@ app = Flask(__name__)
 CORS(app)
 
 # Configure Redis as the storage backend for rate limiting
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")  # Update if needed
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")  # Update as necessary
 limiter = Limiter(
     app,
     key_func=get_remote_address,
-    storage_uri=REDIS_URL
+    storage_uri=REDIS_URL  # Using Redis for rate limiter storage
 )
 
 # Configure logging
@@ -39,12 +39,14 @@ API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY_BASE64 = os.getenv("PRIVATE_KEY_BASE64")
 BASE_URL = os.getenv("BASE_URL")
 
+
 # Utility: Generate Signature
 def generate_signature(api_key, timestamp, path, method, body=""):
     message = f"{api_key}{timestamp}{path}{method}{body}"
     private_key = SigningKey(base64.b64decode(PRIVATE_KEY_BASE64))
     signature = private_key.sign(message.encode("utf-8")).signature
     return base64.b64encode(signature).decode("utf-8")
+
 
 # Utility: Generate Headers
 def get_headers(path, method, body=""):
@@ -59,6 +61,7 @@ def get_headers(path, method, body=""):
     logging.info(f"Generated Headers: {headers}")
     return headers
 
+
 # Utility: Make API Request
 def make_request(method, path, body=""):
     headers = get_headers(path, method, body)
@@ -71,15 +74,17 @@ def make_request(method, path, body=""):
         elif method == "POST":
             response = requests.post(url, headers=headers, data=body, timeout=10)
 
+        # Raise HTTPError if response status is 4xx or 5xx
         response.raise_for_status()
 
+        # Attempt to parse JSON response
         try:
             response_json = response.json()
             logging.info(f"Request URL: {url}")
             logging.info(f"Response Status Code: {response.status_code}")
             logging.info(f"Response Body: {response_json}")
             return response_json
-        except ValueError as json_error:
+        except ValueError:
             logging.error(f"Response is not JSON. Response text: {response.text}")
             return {"error": "Invalid JSON response from API", "details": response.text}
 
@@ -93,6 +98,7 @@ def make_request(method, path, body=""):
         logging.error(f"Unexpected error occurred: {general_error}")
         return {"error": "An unexpected error occurred", "details": str(general_error)}
 
+
 # Helper: Get Best Bid/Ask
 def get_best_bid_ask(symbol):
     """
@@ -101,21 +107,32 @@ def get_best_bid_ask(symbol):
     try:
         path = f"/api/v1/crypto/quotes/{symbol}/"
         response = make_request("GET", path)
+
+        # Validate response
         if "results" not in response or not response["results"]:
             raise ValueError("Invalid response structure from API.")
+
         return response
+
     except Exception as e:
         logging.error(f"Error fetching market data for symbol {symbol}: {e}")
         raise
+
 
 # Routes
 @app.route("/")
 def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
+
+# fetch crypto orders
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_orders", methods=["GET"])
 def fetch_crypto_orders():
+    """
+    Fetch the history of crypto orders from the Robinhood API with optional filters.
+    """
+    # Collect optional query parameters
     query_params = {
         "created_at_start": request.args.get("created_at_start"),
         "created_at_end": request.args.get("created_at_end"),
@@ -129,17 +146,25 @@ def fetch_crypto_orders():
         "cursor": request.args.get("cursor"),
         "limit": request.args.get("limit")
     }
+
+    # Filter out None values to build query string
     filtered_params = {k: v for k, v in query_params.items() if v is not None}
     query_string = "&".join(f"{key}={value}" for key, value in filtered_params.items())
     path = "/api/v1/crypto/trading/orders/"
     if query_string:
         path += f"?{query_string}"
 
+    # Make the GET request to the Robinhood API
     orders_data = make_request("GET", path)
+
+    # Handle errors and return the response
     if "error" in orders_data:
         return jsonify({"error": "Failed to fetch crypto orders", "details": orders_data.get("error")}), 500
+
     return jsonify(orders_data), 200
 
+
+# fetch account
 @limiter.limit("10 per minute")
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
@@ -147,6 +172,8 @@ def fetch_account():
     account_data = make_request("GET", path)
     return jsonify({"response_data": account_data})
 
+
+# fetch crypto holdings
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_holdings", methods=["GET"])
 def fetch_crypto_holdings():
@@ -163,7 +190,7 @@ def fetch_crypto_holdings():
         query_params.append(f"cursor={cursor}")
 
     query_string = "&".join(query_params)
-    path = "/api/v1/crypto/trading/holdings/"
+    path = f"/api/v1/crypto/trading/holdings/"
     if query_string:
         path += f"?{query_string}"
 
@@ -172,6 +199,8 @@ def fetch_crypto_holdings():
         return jsonify({"error": "Failed to fetch crypto holdings", "details": holdings_data["error"]}), 500
     return jsonify(holdings_data), 200
 
+
+# fetch crypto account details
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_account_details", methods=["GET"])
 def fetch_crypto_account_details():
@@ -182,124 +211,50 @@ def fetch_crypto_account_details():
             "error": "Failed to fetch account details",
             "details": account_details["error"]
         }), 500
+
     return jsonify(account_details), 200
+
 
 @limiter.limit("10 per minute")
 @app.route("/proxy/place_order", methods=["POST"])
 def place_order():
     """
-    Place a new crypto trading order using a specific config object 
-    depending on the order type (market, limit, stop_loss, stop_limit).
+    Place a new crypto trading order using a specific USD amount or asset quantity.
     """
     try:
+        # Parse the JSON request body
         order_data = request.json
 
-        # Validate core required fields
-        core_required = ["symbol", "side", "type"]
-        for field in core_required:
+        # Validate required fields
+        required_fields = ["symbol", "side", "type", "usd_amount"]
+        for field in required_fields:
             if field not in order_data:
                 return jsonify({
                     "error": f"Missing required field: {field}"
                 }), 400
 
-        client_order_id = order_data.get("client_order_id", str(uuid.uuid4()))
-
-        payload = {
-            "client_order_id": client_order_id,
-            "side": order_data["side"],
-            "type": order_data["type"],
-            "symbol": order_data["symbol"]
+        # Construct the market_order_config
+        market_order_config = {
+            "quote_amount": order_data["usd_amount"]  # Use quote_amount for USD-based orders
         }
 
-        order_type = order_data["type"].lower()
+        # Construct the order payload
+        path = "/api/v1/crypto/trading/orders/"
+        body = json.dumps({
+            "client_order_id": str(uuid.uuid4()),  # Generate a unique client_order_id
+            "side": order_data["side"],  # "buy" or "sell"
+            "type": order_data["type"],  # Order type (market, limit, etc.)
+            "symbol": order_data["symbol"],  # Trading pair (e.g., BTC-USD)
+            "market_order_config": market_order_config
+        })
 
-        if order_type == "market":
-            # Revised to look for "quote_amount" or "asset_quantity" 
-            # either directly or inside market_order_config
-            config = order_data.get("market_order_config", {})
-            if "quote_amount" in config:
-                payload["market_order_config"] = {"quote_amount": config["quote_amount"]}
-            elif "asset_quantity" in config:
-                payload["market_order_config"] = {"asset_quantity": config["asset_quantity"]}
-            else:
-                return jsonify({
-                    "error": "For market orders, please provide either 'quote_amount' or 'asset_quantity' inside market_order_config."
-                }), 400
-
-        elif order_type == "limit":
-            if "limit_price" not in order_data:
-                return jsonify({"error": "Missing required field 'limit_price' for limit order."}), 400
-
-            config = {
-                "limit_price": order_data["limit_price"],
-                "time_in_force": order_data.get("time_in_force", "gtc")
-            }
-
-            if "usd_amount" in order_data:
-                config["quote_amount"] = order_data["usd_amount"]
-            elif "asset_quantity" in order_data:
-                config["asset_quantity"] = order_data["asset_quantity"]
-            else:
-                return jsonify({
-                    "error": "For limit orders, provide either 'usd_amount' or 'asset_quantity'."
-                }), 400
-
-            payload["limit_order_config"] = config
-
-        elif order_type == "stop_loss":
-            if "stop_price" not in order_data:
-                return jsonify({"error": "Missing required field 'stop_price' for stop_loss order."}), 400
-
-            config = {
-                "stop_price": order_data["stop_price"],
-                "time_in_force": order_data.get("time_in_force", "gtc")
-            }
-
-            if "usd_amount" in order_data:
-                config["quote_amount"] = order_data["usd_amount"]
-            elif "asset_quantity" in order_data:
-                config["asset_quantity"] = order_data["asset_quantity"]
-            else:
-                return jsonify({
-                    "error": "For stop_loss orders, provide either 'usd_amount' or 'asset_quantity'."
-                }), 400
-
-            payload["stop_loss_order_config"] = config
-
-        elif order_type == "stop_limit":
-            missing_fields = []
-            for f in ["stop_price", "limit_price"]:
-                if f not in order_data:
-                    missing_fields.append(f)
-            if missing_fields:
-                return jsonify({"error": f"Missing required fields for stop_limit order: {missing_fields}"}), 400
-
-            config = {
-                "stop_price": order_data["stop_price"],
-                "limit_price": order_data["limit_price"],
-                "time_in_force": order_data.get("time_in_force", "gtc")
-            }
-
-            if "usd_amount" in order_data:
-                config["quote_amount"] = order_data["usd_amount"]
-            elif "asset_quantity" in order_data:
-                config["asset_quantity"] = order_data["asset_quantity"]
-            else:
-                return jsonify({
-                    "error": "For stop_limit orders, provide either 'usd_amount' or 'asset_quantity'."
-                }), 400
-
-            payload["stop_limit_order_config"] = config
-
-        else:
-            return jsonify({"error": f"Unknown order type '{order_type}'"}), 400
-
-        body = json.dumps(payload)
+        # Log the payload for debugging
         logging.info(f"Order Payload: {body}")
 
-        path = "/api/v1/crypto/trading/orders/"
+        # Make the POST request to Robinhood's API
         response = make_request("POST", path, body)
 
+        # Handle errors in the response
         if "error" in response:
             logging.error(f"Error placing order: {response.get('error')}")
             return jsonify({
@@ -307,6 +262,7 @@ def place_order():
                 "details": response.get("error")
             }), 500
 
+        # Return the successful response
         return jsonify(response), 201
 
     except Exception as e:
@@ -316,76 +272,6 @@ def place_order():
             "details": str(e)
         }), 500
 
-@limiter.limit("10 per minute")
-@app.route("/proxy/smart_order", methods=["POST"])
-def smart_order():
-    """
-    An endpoint that decides how much crypto to buy/sell before
-    calling place_order. This is meant to be invoked by ChatGPT after 
-    it asks clarifying questions (risk tolerance, available budget, etc.).
-    """
-    try:
-        data = request.json or {}
-
-        # 1. Gather user inputs
-        symbol = data.get("symbol", "BTC-USD").upper()
-        side = data.get("side", "buy").lower()
-        risk_level = data.get("risk_level", "medium").lower()
-
-        # 2. Fetch quotes to inform logic (optional step)
-        # Construct an absolute URL to /proxy/crypto_quotes
-        # (assuming your BASE_URL is for real external calls,
-        #  so we use request.host_url to loop back to ourselves)
-        quotes_url = f"{request.host_url.rstrip('/')}/proxy/crypto_quotes?symbol={symbol}"
-        quotes_response = requests.get(quotes_url)
-
-        if quotes_response.status_code != 200:
-            return jsonify({"error": "Failed to fetch quotes", "details": quotes_response.text}), 400
-
-        quotes_data = quotes_response.json()
-        ask_price = quotes_data.get("quotes", {}).get("ask", 0)
-        if ask_price == 0:
-            return jsonify({"error": "No valid ask price found"}), 400
-
-        # 3. AI or business logic
-        if risk_level == "low":
-            usd_amount = 5
-        elif risk_level == "high":
-            usd_amount = 50
-        else:
-            usd_amount = 20
-
-        # 4. Build payload for place_order
-        final_payload = {
-            "symbol": symbol,
-            "side": side,
-            "type": "market",
-            "market_order_config": {
-                "quote_amount": usd_amount
-            }
-        }
-
-        # 5. Call /proxy/place_order
-        place_order_url = f"{request.host_url.rstrip('/')}/proxy/place_order"
-        order_response = requests.post(place_order_url, json=final_payload)
-
-        if order_response.status_code == 201:
-            return jsonify({
-                "message": "Order placed successfully",
-                "order_data": order_response.json()
-            }), 201
-        else:
-            return jsonify({
-                "error": "Failed to place order",
-                "details": order_response.json()
-            }), order_response.status_code
-
-    except Exception as e:
-        logging.error(f"Error in smart_order: {e}")
-        return jsonify({
-            "error": "An unexpected error occurred in smart_order",
-            "details": str(e)
-        }), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
