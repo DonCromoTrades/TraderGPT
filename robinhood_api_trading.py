@@ -221,37 +221,135 @@ def fetch_crypto_account_details():
 @app.route("/proxy/place_order", methods=["POST"])
 def place_order():
     """
-    Place a new crypto trading order using a specific USD amount or asset quantity.
+    Place a new crypto trading order using a specific config object 
+    depending on the order type (market, limit, stop_loss, stop_limit).
     """
     try:
         # Parse the JSON request body
         order_data = request.json
 
-        # Validate required fields
-        required_fields = ["symbol", "side", "type", "usd_amount"]
-        for field in required_fields:
+        # Validate core required fields
+        core_required = ["symbol", "side", "type"]
+        for field in core_required:
             if field not in order_data:
                 return jsonify({
                     "error": f"Missing required field: {field}"
                 }), 400
 
-        # Construct the market_order_config
-        market_order_config = {
-            "quote_amount": order_data["usd_amount"]  # Use quote_amount for USD-based orders
+        # Optional or required based on type
+        # For example, you might require "usd_amount" or "asset_quantity" 
+        # for a market order, or "limit_price" for a limit order, etc.
+
+        # Respect user-provided client_order_id if present, else auto-generate
+        client_order_id = order_data.get("client_order_id", str(uuid.uuid4()))
+
+        # Build the base payload
+        payload = {
+            "client_order_id": client_order_id,
+            "side": order_data["side"],  # "buy" or "sell"
+            "type": order_data["type"],  # "market", "limit", "stop_loss", or "stop_limit"
+            "symbol": order_data["symbol"]  # e.g. "BTC-USD"
         }
 
-        # Construct the order payload
-        path = "/api/v1/crypto/trading/orders/"
-        body = json.dumps({
-            "client_order_id": str(uuid.uuid4()),  # Generate a unique client_order_id
-            "side": order_data["side"],  # "buy" or "sell"
-            "type": order_data["type"],  # Order type (market, limit, etc.)
-            "symbol": order_data["symbol"],  # Trading pair (e.g., BTC-USD)
-            "market_order_config": market_order_config  # Include the market_order_config
-        })
+        # Based on order type, build the correct config object.
+        order_type = order_data["type"].lower()
+
+        if order_type == "market":
+            # The docs say you can send either "quote_amount" or "asset_quantity" (but not both).
+            # Let's assume your script wants to place an order by USD (quote) unless user sets asset_quantity.
+            # In your old code, you called it "usd_amount" - let’s rename or adapt:
+            if "usd_amount" in order_data:
+                payload["market_order_config"] = {"quote_amount": order_data["usd_amount"]}
+            elif "asset_quantity" in order_data:
+                payload["market_order_config"] = {"asset_quantity": order_data["asset_quantity"]}
+            else:
+                return jsonify({
+                    "error": "For market orders, please provide either 'usd_amount' or 'asset_quantity'."
+                }), 400
+
+        elif order_type == "limit":
+            # The docs say limit_order_config requires "limit_price" plus either "quote_amount" or "asset_quantity".
+            if "limit_price" not in order_data:
+                return jsonify({"error": "Missing required field 'limit_price' for limit order."}), 400
+
+            config = {
+                "limit_price": order_data["limit_price"],
+                "time_in_force": order_data.get("time_in_force", "gtc")  # Default to gtc
+            }
+
+            # Decide if user wants to specify quote_amount or asset_quantity
+            if "usd_amount" in order_data:
+                config["quote_amount"] = order_data["usd_amount"]
+            elif "asset_quantity" in order_data:
+                config["asset_quantity"] = order_data["asset_quantity"]
+            else:
+                return jsonify({
+                    "error": "For limit orders, provide either 'usd_amount' or 'asset_quantity'."
+                }), 400
+
+            payload["limit_order_config"] = config
+
+        elif order_type == "stop_loss":
+            # The docs say we need a stop_loss_order_config with "stop_price" 
+            # plus quote_amount or asset_quantity.
+            if "stop_price" not in order_data:
+                return jsonify({"error": "Missing required field 'stop_price' for stop_loss order."}), 400
+
+            config = {
+                "stop_price": order_data["stop_price"],
+                "time_in_force": order_data.get("time_in_force", "gtc")
+            }
+
+            # Again, only one of quote_amount or asset_quantity
+            if "usd_amount" in order_data:
+                config["quote_amount"] = order_data["usd_amount"]
+            elif "asset_quantity" in order_data:
+                config["asset_quantity"] = order_data["asset_quantity"]
+            else:
+                return jsonify({
+                    "error": "For stop_loss orders, provide either 'usd_amount' or 'asset_quantity'."
+                }), 400
+
+            payload["stop_loss_order_config"] = config
+
+        elif order_type == "stop_limit":
+            # The docs say we need a stop_limit_order_config with "stop_price" and "limit_price" 
+            # plus quote_amount or asset_quantity.
+            missing_fields = []
+            for f in ["stop_price", "limit_price"]:
+                if f not in order_data:
+                    missing_fields.append(f)
+            if missing_fields:
+                return jsonify({"error": f"Missing required fields for stop_limit order: {missing_fields}"}), 400
+
+            config = {
+                "stop_price": order_data["stop_price"],
+                "limit_price": order_data["limit_price"],
+                "time_in_force": order_data.get("time_in_force", "gtc")
+            }
+
+            if "usd_amount" in order_data:
+                config["quote_amount"] = order_data["usd_amount"]
+            elif "asset_quantity" in order_data:
+                config["asset_quantity"] = order_data["asset_quantity"]
+            else:
+                return jsonify({
+                    "error": "For stop_limit orders, provide either 'usd_amount' or 'asset_quantity'."
+                }), 400
+
+            payload["stop_limit_order_config"] = config
+
+        else:
+            return jsonify({"error": f"Unknown order type '{order_type}'"}), 400
+
+        # Convert payload to JSON
+        body = json.dumps(payload)
 
         # Log the payload for debugging
         logging.info(f"Order Payload: {body}")
+
+        # Construct path for the POST
+        path = "/api/v1/crypto/trading/orders/"
 
         # Make the POST request to Robinhood's API
         response = make_request("POST", path, body)
@@ -273,6 +371,7 @@ def place_order():
             "error": "An unexpected error occurred",
             "details": str(e)
         }), 500
+
 
 
 if __name__ == "__main__":
