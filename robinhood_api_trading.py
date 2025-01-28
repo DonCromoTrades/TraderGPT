@@ -7,10 +7,11 @@ import uuid
 import logging
 import os
 from dotenv import load_dotenv
-from nacl.signing import SigningKey
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+import hmac
+import hashlib
 
 # Load environment variables
 load_dotenv()
@@ -24,7 +25,8 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")  # Update as necess
 limiter = Limiter(
     app,
     key_func=get_remote_address,
-    storage_uri=REDIS_URL  # Using Redis for rate limiter storage
+    storage_uri=REDIS_URL if REDIS_URL else "memory://",  # Fallback to in-memory storage
+    default_limits=["10 per minute"]
 )
 
 # Configure logging
@@ -39,14 +41,12 @@ API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY_BASE64 = os.getenv("PRIVATE_KEY_BASE64")
 BASE_URL = os.getenv("BASE_URL")
 
-
-# Utility: Generate Signature
+# Utility: Generate Signature using HMAC-SHA256
 def generate_signature(api_key, timestamp, path, method, body=""):
-    message = f"{api_key}{timestamp}{path}{method}{body}"
-    private_key = SigningKey(base64.b64decode(PRIVATE_KEY_BASE64))
-    signature = private_key.sign(message.encode("utf-8")).signature
+    message = f"{api_key}{timestamp}{path}{method}{body}".encode("utf-8")
+    secret = base64.b64decode(PRIVATE_KEY_BASE64)
+    signature = hmac.new(secret, message, hashlib.sha256).digest()
     return base64.b64encode(signature).decode("utf-8")
-
 
 # Utility: Generate Headers
 def get_headers(path, method, body=""):
@@ -60,7 +60,6 @@ def get_headers(path, method, body=""):
     }
     logging.info(f"Generated Headers: {headers}")
     return headers
-
 
 # Utility: Make API Request
 def make_request(method, path, body=""):
@@ -98,33 +97,12 @@ def make_request(method, path, body=""):
         logging.error(f"Unexpected error occurred: {general_error}")
         return {"error": "An unexpected error occurred", "details": str(general_error)}
 
-
-# Helper: Get Best Bid/Ask
-def get_best_bid_ask(symbol):
-    """
-    Fetch the current best bid/ask prices for a given symbol.
-    """
-    try:
-        path = f"/api/v1/crypto/quotes/{symbol}/"
-        response = make_request("GET", path)
-
-        # Validate response
-        if "results" not in response or not response["results"]:
-            raise ValueError("Invalid response structure from API.")
-
-        return response
-
-    except Exception as e:
-        logging.error(f"Error fetching market data for symbol {symbol}: {e}")
-        raise
-
-
 # Routes
 @app.route("/")
 def home():
     return jsonify({"message": "TraderGPT API is live!"}), 200
 
-# fetch crypto orders
+# Fetch crypto orders
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_orders", methods=["GET"])
 def fetch_crypto_orders():
@@ -162,7 +140,7 @@ def fetch_crypto_orders():
 
     return jsonify(orders_data), 200
 
-# fetch account
+# Fetch account details
 @limiter.limit("10 per minute")
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
@@ -170,7 +148,7 @@ def fetch_account():
     account_data = make_request("GET", path)
     return jsonify({"response_data": account_data})
 
-# fetch crypto holdings
+# Fetch crypto holdings
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_holdings", methods=["GET"])
 def fetch_crypto_holdings():
@@ -196,84 +174,80 @@ def fetch_crypto_holdings():
         return jsonify({"error": "Failed to fetch crypto holdings", "details": holdings_data["error"]}), 500
     return jsonify(holdings_data), 200
 
-# fetch crypto account details
+# Fetch crypto account details
 @limiter.limit("10 per minute")
 @app.route("/proxy/crypto_account_details", methods=["GET"])
 def fetch_crypto_account_details():
-    # Path for the Robinhood API endpoint
     path = "/api/v1/crypto/trading/accounts/"
-    
-    # Make the GET request to the Robinhood API
     account_details = make_request("GET", path)
-    
-    # Handle errors and return the response
     if "error" in account_details:
         return jsonify({
             "error": "Failed to fetch account details",
             "details": account_details["error"]
         }), 500
-
     return jsonify(account_details), 200
 
-# Add other endpoints here...
-
+# Place a crypto order
 @limiter.limit("10 per minute")
 @app.route("/proxy/place_order", methods=["POST"])
 def place_order():
-    """
-    Place a new crypto trading order using a specific USD amount or asset quantity.
-    """
     try:
-        # Parse the JSON request body
         order_data = request.json
+        if not order_data:
+            return jsonify({"error": "No JSON body provided"}), 400
 
-        # Validate required fields
-        required_fields = ["symbol", "side", "type", "usd_amount"]
-        for field in required_fields:
+        # Required fields check
+        required = ["symbol", "side", "type"]
+        for field in required:
             if field not in order_data:
-                return jsonify({
-                    "error": f"Missing required field: {field}"
-                }), 400
+                return jsonify({"error": f"Missing field: {field}"}), 400
 
-        # Construct the market_order_config
-        market_order_config = {
-            "quote_amount": order_data["usd_amount"]  # Use quote_amount for USD-based orders
+        # Build payload
+        payload = {
+            "client_order_id": str(uuid.uuid4()),
+            "side": order_data["side"].lower(),  # Ensure lowercase
+            "type": order_data["type"].lower(),
+            "symbol": order_data["symbol"].upper()  # Ensure uppercase
         }
 
-        # Construct the order payload
+        # Market Order
+        if payload["type"] == "market":
+            if "usd_amount" not in order_data:
+                return jsonify({"error": "usd_amount required for market orders"}), 400
+            payload["market_order_config"] = {
+                "quote_amount": f"{order_data['usd_amount']:.2f}"  # Format as string
+            }
+
+        # Limit Order
+        elif payload["type"] == "limit":
+            required_limit = ["limit_price", "usd_amount"]
+            for field in required_limit:
+                if field not in order_data:
+                    return jsonify({"error": f"Missing field: {field}"}), 400
+            payload["limit_order_config"] = {
+                "limit_price": f"{order_data['limit_price']:.2f}",
+                "quote_amount": f"{order_data['usd_amount']:.2f}",
+                "time_in_force": order_data.get("time_in_force", "gtc")
+            }
+
+        else:
+            return jsonify({"error": "Unsupported order type"}), 400
+
+        # Send request
+        body_json = json.dumps(payload)
         path = "/api/v1/crypto/trading/orders/"
-        body = json.dumps({
-            "client_order_id": str(uuid.uuid4()),  # Generate a unique client_order_id
-            "side": order_data["side"],  # "buy" or "sell"
-            "type": order_data["type"],  # Order type (market, limit, etc.)
-            "symbol": order_data["symbol"],  # Trading pair (e.g., BTC-USD)
-            "market_order_config": market_order_config  # Include the market_order_config
-        })
+        response = make_request("POST", path, body_json)
 
-        # Log the payload for debugging
-        logging.info(f"Order Payload: {body}")
-
-        # Make the POST request to Robinhood's API
-        response = make_request("POST", path, body)
-
-        # Handle errors in the response
         if "error" in response:
-            logging.error(f"Error placing order: {response.get('error')}")
-            return jsonify({
-                "error": "Failed to place the order",
-                "details": response.get("error")
-            }), 500
+            logging.error(f"API Error: {response.get('error')}")
+            return jsonify({"error": "Order failed", "details": response}), 500
 
-        # Return the successful response
         return jsonify(response), 201
 
     except Exception as e:
-        logging.error(f"Unexpected error while placing order: {e}")
-        return jsonify({
-            "error": "An unexpected error occurred",
-            "details": str(e)
-        }), 500
+        logging.error(f"Error: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
-
+# Run the app
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
