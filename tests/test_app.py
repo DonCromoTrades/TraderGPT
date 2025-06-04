@@ -44,7 +44,7 @@ def get_headers(path, method, body=""):
 
 @app.route("/proxy/fetch_account", methods=["GET"])
 def fetch_account():
-    """Fetch buying power and BTC holdings."""
+    """Retrieve account details from the API."""
     path = "/api/v1/crypto/trading/accounts/"
     url = BASE_URL + path
     headers = get_headers(path, "GET")
