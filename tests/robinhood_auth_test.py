@@ -100,7 +100,8 @@ def place_market_order(symbol, side, usd_amount):
         print("Error placing order:", e)
         return None
 
-# Main execution
-print("Calling place_market_order...")
-order_response = place_market_order("BTC-USD", "buy", 5)
-print("Order Response:", order_response)
+if __name__ == "__main__":
+    # Main execution
+    print("Calling place_market_order...")
+    order_response = place_market_order("BTC-USD", "buy", 5)
+    print("Order Response:", order_response)
